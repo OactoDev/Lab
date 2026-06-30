@@ -1,0 +1,16 @@
+# This file specifies files that gcloud should not upload to Cloud Build
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.git
+.gitignore
+*.md
+.env
+.env.local
+venv/
+.vscode/
+.idea/
+uploads/
+data.json
+collection_images/
