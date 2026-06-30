@@ -56,7 +56,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
-const API_BASE_URL = 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const SCALE = 1.3
 
 const props = defineProps({

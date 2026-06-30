@@ -140,7 +140,7 @@ import { ref, computed, onMounted } from 'vue'
 import PdfEditor from './components/PdfEditor.vue'
 import TextEditor from './components/TextEditor.vue'
 
-const API_BASE_URL = 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const TEXT_EXTENSIONS = ['txt', 'md', 'csv', 'json', 'log', 'yml', 'yaml', 'js', 'py', 'html', 'css']
 
 const activeTab = ref('documents')

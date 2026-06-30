@@ -17,7 +17,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 
-const API_BASE_URL = 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const props = defineProps({
   file: { type: Object, required: true },
