@@ -1,7 +1,12 @@
 <template>
-  <div v-if="!authReady" class="status-screen">Loading...</div>
+  <div v-if="!authReady || authCheck === 'checking'" class="status-screen">Loading...</div>
 
   <Login v-else-if="!currentUser" />
+
+  <div v-else-if="authCheck === 'denied'" class="status-screen denied">
+    <p>This account ({{ currentUser.email }}) is not authorized to use this app.</p>
+    <button @click="logout">Sign out</button>
+  </div>
 
   <div v-else class="app-container">
     <header class="app-header">
@@ -153,6 +158,11 @@ import { currentUser, authReady, logout } from './auth'
 
 const TEXT_EXTENSIONS = ['txt', 'md', 'csv', 'json', 'log', 'yml', 'yaml', 'js', 'py', 'html', 'css']
 
+// 'checking' | 'authorized' | 'denied' — backed by /me, which enforces the
+// ALLOWED_EMAILS allowlist. Authentication alone (any Google account) does
+// not imply authorization, so this gate must be checked separately.
+const authCheck = ref('checking')
+
 const activeTab = ref('documents')
 
 const collections = ref([])
@@ -278,17 +288,28 @@ const createCollection = async () => {
   }
 }
 
-// Load data only once a user is signed in; clear it on sign-out.
+// Any Google account can authenticate, but only allowlisted emails are
+// authorized. Confirm via /me (which enforces ALLOWED_EMAILS) before loading
+// any data or rendering the app shell.
 watch(
   currentUser,
-  (user) => {
-    if (user) {
-      fetchCollections()
-      fetchFiles()
-    } else {
+  async (user) => {
+    if (!user) {
+      authCheck.value = 'checking'
       collections.value = []
       files.value = []
       openFile.value = null
+      return
+    }
+
+    authCheck.value = 'checking'
+    const res = await apiFetch('/me')
+    if (res.ok) {
+      authCheck.value = 'authorized'
+      fetchCollections()
+      fetchFiles()
+    } else {
+      authCheck.value = 'denied'
     }
   },
   { immediate: true }
@@ -301,6 +322,20 @@ watch(
   align-items: center;
   justify-content: center;
   min-height: 100vh;
+}
+
+.status-screen.denied {
+  flex-direction: column;
+  gap: 16px;
+  text-align: center;
+  padding: 24px;
+}
+
+.status-screen.denied button {
+  border: 1px solid #000;
+  background: #fff;
+  color: #000;
+  padding: 8px 16px;
 }
 
 .app-container {
