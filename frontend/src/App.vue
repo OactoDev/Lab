@@ -1,6 +1,26 @@
 <template>
-  <div class="layout">
-    <aside class="sidebar">
+  <div class="app-container">
+    <header class="app-header">
+      <div class="tabs">
+        <button
+          class="tab"
+          :class="{ active: activeTab === 'documents' }"
+          @click="activeTab = 'documents'"
+        >
+          Documents
+        </button>
+        <button
+          class="tab"
+          :class="{ active: activeTab === 'ai-lab' }"
+          @click="activeTab = 'ai-lab'"
+        >
+          AI Lab
+        </button>
+      </div>
+    </header>
+
+    <div v-if="activeTab === 'documents'" class="layout">
+      <aside class="sidebar">
       <div class="sidebar-header">
         <span>COLLECTIONS</span>
         <button class="plus-btn" @click="showModal = true">+</button>
@@ -86,6 +106,12 @@
         </div>
       </div>
     </main>
+    </div>
+
+    <div v-else-if="activeTab === 'ai-lab'" class="ai-lab-page">
+      <h1>AI Lab</h1>
+      <p>Coming soon...</p>
+    </div>
 
     <div v-if="showModal" class="modal-overlay" @click.self="showModal = false">
       <div class="modal">
@@ -116,6 +142,8 @@ import TextEditor from './components/TextEditor.vue'
 
 const API_BASE_URL = 'http://localhost:8000'
 const TEXT_EXTENSIONS = ['txt', 'md', 'csv', 'json', 'log', 'yml', 'yaml', 'js', 'py', 'html', 'css']
+
+const activeTab = ref('documents')
 
 const collections = ref([])
 const files = ref([])
@@ -239,9 +267,50 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.app-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-header {
+  border-bottom: 1px solid #000;
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+}
+
+.tab {
+  flex: 1;
+  padding: 12px;
+  border: none;
+  border-right: 1px solid #000;
+  background: #fff;
+  color: #000;
+  cursor: pointer;
+  font-weight: normal;
+  text-align: center;
+}
+
+.tab:last-child {
+  border-right: none;
+}
+
+.tab.active {
+  font-weight: bold;
+  text-decoration: underline;
+}
+
 .layout {
   display: flex;
-  min-height: 100vh;
+  flex: 1;
+}
+
+.ai-lab-page {
+  flex: 1;
+  padding: 24px;
 }
 
 .sidebar {
