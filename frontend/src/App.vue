@@ -1,5 +1,9 @@
 <template>
-  <div class="app-container">
+  <div v-if="!authReady" class="status-screen">Loading...</div>
+
+  <Login v-else-if="!currentUser" />
+
+  <div v-else class="app-container">
     <header class="app-header">
       <div class="tabs">
         <button
@@ -16,6 +20,10 @@
         >
           AI Lab
         </button>
+        <div class="header-account">
+          <span class="account-email">{{ currentUser.email }}</span>
+          <button class="logout-btn" @click="logout">Sign out</button>
+        </div>
       </div>
     </header>
 
@@ -136,11 +144,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import PdfEditor from './components/PdfEditor.vue'
 import TextEditor from './components/TextEditor.vue'
+import Login from './components/Login.vue'
+import { apiFetch } from './api'
+import { currentUser, authReady, logout } from './auth'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const TEXT_EXTENSIONS = ['txt', 'md', 'csv', 'json', 'log', 'yml', 'yaml', 'js', 'py', 'html', 'css']
 
 const activeTab = ref('documents')
@@ -177,13 +187,13 @@ const openFileInPanel = (file) => {
 }
 
 const fetchCollections = async () => {
-  const res = await fetch(`${API_BASE_URL}/collections`)
-  collections.value = await res.json()
+  const res = await apiFetch('/collections')
+  if (res.ok) collections.value = await res.json()
 }
 
 const fetchFiles = async () => {
-  const res = await fetch(`${API_BASE_URL}/files`)
-  files.value = await res.json()
+  const res = await apiFetch('/files')
+  if (res.ok) files.value = await res.json()
 }
 
 const handleFileSelect = (event) => {
@@ -203,7 +213,7 @@ const uploadFile = async () => {
   }
 
   try {
-    const res = await fetch(`${API_BASE_URL}/upload`, { method: 'POST', body: formData })
+    const res = await apiFetch('/upload', { method: 'POST', body: formData })
     if (res.ok) {
       message.value = `Uploaded "${selectedFile.value.name}"`
       selectedFile.value = null
@@ -219,13 +229,21 @@ const uploadFile = async () => {
   }
 }
 
-const downloadFile = (file) => {
-  window.location.href = `${API_BASE_URL}/download/${file.stored_filename}`
+const downloadFile = async (file) => {
+  const res = await apiFetch(`/download/${file.id}`)
+  if (!res.ok) return
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = file.original_filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 const deleteFile = async (file) => {
   if (!confirm(`Delete "${file.original_filename}"?`)) return
-  const res = await fetch(`${API_BASE_URL}/files/${file.id}`, { method: 'DELETE' })
+  const res = await apiFetch(`/files/${file.id}`, { method: 'DELETE' })
   if (res.ok) {
     if (openFile.value?.id === file.id) {
       openFile.value = null
@@ -253,20 +271,38 @@ const createCollection = async () => {
     formData.append('image', newCollectionImage.value)
   }
 
-  const res = await fetch(`${API_BASE_URL}/collections`, { method: 'POST', body: formData })
+  const res = await apiFetch('/collections', { method: 'POST', body: formData })
   if (res.ok) {
     await fetchCollections()
     closeModal()
   }
 }
 
-onMounted(() => {
-  fetchCollections()
-  fetchFiles()
-})
+// Load data only once a user is signed in; clear it on sign-out.
+watch(
+  currentUser,
+  (user) => {
+    if (user) {
+      fetchCollections()
+      fetchFiles()
+    } else {
+      collections.value = []
+      files.value = []
+      openFile.value = null
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>
+.status-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
 .app-container {
   display: flex;
   flex-direction: column;
@@ -280,6 +316,30 @@ onMounted(() => {
 .tabs {
   display: flex;
   gap: 0;
+  align-items: stretch;
+}
+
+.header-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-left: 1px solid #000;
+  font-size: 13px;
+}
+
+.account-email {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.logout-btn {
+  border: 1px solid #000;
+  background: #fff;
+  color: #000;
+  padding: 4px 10px;
 }
 
 .tab {

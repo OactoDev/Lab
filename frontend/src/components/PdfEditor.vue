@@ -53,10 +53,10 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf'
 import pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker?url'
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { apiFetch } from '../api'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const SCALE = 1.3
 
 const props = defineProps({
@@ -82,7 +82,7 @@ let drawing = false
 let nextAnnotationId = 1
 
 const fetchPdfBytes = async () => {
-  const res = await fetch(`${API_BASE_URL}/download/${props.file.stored_filename}`)
+  const res = await apiFetch(`/download/${props.file.id}`)
   return await res.arrayBuffer()
 }
 
@@ -211,7 +211,7 @@ const save = async () => {
     const formData = new FormData()
     formData.append('file', blob, props.file.original_filename)
 
-    const res = await fetch(`${API_BASE_URL}/files/${props.file.id}`, {
+    const res = await apiFetch(`/files/${props.file.id}`, {
       method: 'PUT',
       body: formData,
     })

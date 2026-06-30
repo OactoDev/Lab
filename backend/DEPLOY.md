@@ -21,48 +21,81 @@ Then visit `http://localhost:8080` and test endpoints.
 
 ## Deploy to GCP Cloud Run
 
+> Read **../SECURITY.md** first — this deploy assumes a private bucket,
+> Firestore, Firebase Auth, and a dedicated least-privilege service account.
+
 ### 1. Set up GCP project
 
 ```bash
-# Set your project ID
 export PROJECT_ID=your-gcp-project-id
+export GCS_BUCKET=$PROJECT_ID-uploads
 gcloud config set project $PROJECT_ID
 
 # Enable required APIs
-gcloud services enable run.googleapis.com
-gcloud services enable artifactregistry.googleapis.com
-gcloud services enable cloudbuild.googleapis.com
+gcloud services enable \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  cloudbuild.googleapis.com \
+  storage.googleapis.com \
+  firestore.googleapis.com \
+  identitytoolkit.googleapis.com
 ```
 
-### 2. Create Artifact Registry (for container images)
+### 2. Firebase Auth
+
+1. In the [Firebase console](https://console.firebase.google.com), add Firebase
+   to this same GCP project.
+2. Authentication → Sign-in method → enable **Google** (and optionally
+   Email/Password). Restrict signups if using Google only.
+3. Project settings → Your apps → Web app → copy the config into the frontend's
+   `VITE_FIREBASE_*` env vars.
+
+### 3. Private bucket + Firestore
 
 ```bash
-gcloud artifacts repositories create cloud-run-repo \
-  --repository-format=docker \
-  --location=us-central1 \
-  --description="Cloud Run images"
+# Private bucket (uniform access + public access prevention)
+gsutil mb -b on -l us-central1 gs://$GCS_BUCKET
+gsutil pap set enforced gs://$GCS_BUCKET
+
+# Firestore in Native mode (once per project)
+gcloud firestore databases create --location=us-central1
 ```
 
-### 3. Deploy directly to Cloud Run
+### 4. Dedicated runtime service account (least privilege)
+
+```bash
+gcloud iam service-accounts create lab-backend-sa \
+  --display-name="Lab backend runtime"
+
+gsutil iam ch \
+  serviceAccount:lab-backend-sa@$PROJECT_ID.iam.gserviceaccount.com:roles/storage.objectAdmin \
+  gs://$GCS_BUCKET
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:lab-backend-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/datastore.user"
+```
+
+### 5. Deploy to Cloud Run
 
 ```bash
 gcloud run deploy lab-backend \
   --source . \
   --platform managed \
   --region us-central1 \
+  --service-account lab-backend-sa@$PROJECT_ID.iam.gserviceaccount.com \
   --allow-unauthenticated \
   --memory 512Mi \
   --cpu 1 \
-  --timeout 3600
+  --timeout 3600 \
+  --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCS_BUCKET=$GCS_BUCKET,ALLOWED_EMAILS=you@example.com"
 ```
 
-This command:
-- Builds the Docker image automatically
-- Pushes to Artifact Registry
-- Deploys to Cloud Run
-- Allows unauthenticated access (so frontend can call it)
-- Allocates 512MB RAM and 1 CPU
-- 1-hour timeout for operations
+Notes:
+- `--allow-unauthenticated` exposes the *port*, but every data endpoint still
+  requires a valid Firebase token + allowlisted email. Only `/` (health) is open.
+- Update `ALLOWED_EMAILS` (comma-separated) to invite/revoke team members.
+- Builds the image, pushes to Artifact Registry, deploys with the locked-down SA.
 
 **Note:** First deployment takes 1-2 minutes. Output will show your service URL: `https://lab-backend-xxxxx.run.app`
 
@@ -87,25 +120,20 @@ gcloud run deploy lab-backend --source . --region us-central1 --platform managed
 
 ## Environment Variables
 
-Currently, the backend doesn't need environment variables. If you add them later:
-
-```bash
-gcloud run deploy lab-backend \
-  --source . \
-  --region us-central1 \
-  --set-env-vars KEY=value
-```
+Set on deploy via `--set-env-vars` (see step 5). See `.env.example` for the
+full list:
+- `GCP_PROJECT_ID` — project owning the bucket + Firestore
+- `GCS_BUCKET` — private uploads bucket
+- `ALLOWED_EMAILS` — comma-separated invite allowlist
+- `ALLOWED_ORIGINS` — optional extra CORS origins (localhost + `*.vercel.app` already allowed)
 
 ## Important Notes
 
 ### File Storage
-⚠️ Cloud Run's filesystem is **ephemeral** — files in `/app/uploads/` and `/app/data.json` are deleted when the service restarts.
-
-**For production persistence, you need to:**
-1. Use Google Cloud Storage (GCS) for uploads
-2. Use Cloud Datastore or Firestore for data.json
-
-For now, this limitation is acceptable for testing.
+✅ Files are stored in a **private GCS bucket** and metadata in **Firestore**, so
+data survives restarts/redeploys. Nothing on the container disk is persisted —
+that's intentional. Bytes are only served through the authenticated
+`/download/{file_id}` endpoint; the bucket itself stays private.
 
 ### Quotas & Pricing
 - Free tier: 2 million requests/month

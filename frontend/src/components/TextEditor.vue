@@ -16,8 +16,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+import { apiFetch } from '../api'
 
 const props = defineProps({
   file: { type: Object, required: true },
@@ -32,7 +31,7 @@ const message = ref('')
 
 const load = async () => {
   isLoading.value = true
-  const res = await fetch(`${API_BASE_URL}/download/${props.file.stored_filename}`)
+  const res = await apiFetch(`/download/${props.file.id}`)
   content.value = await res.text()
   isLoading.value = false
 }
@@ -46,7 +45,7 @@ const save = async () => {
   formData.append('file', blob, props.file.original_filename)
 
   try {
-    const res = await fetch(`${API_BASE_URL}/files/${props.file.id}`, {
+    const res = await apiFetch(`/files/${props.file.id}`, {
       method: 'PUT',
       body: formData,
     })
