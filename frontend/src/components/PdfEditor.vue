@@ -8,6 +8,42 @@
       <button :class="{ active: mode === 'text' }" @click="mode = mode === 'text' ? 'none' : 'text'">
         Add Text
       </button>
+
+      <span v-if="mode === 'draw' || mode === 'text'" class="swatches">
+        <button
+          v-for="c in COLORS"
+          :key="c"
+          class="swatch"
+          :class="{ active: color === c }"
+          :style="{ background: c }"
+          :title="c"
+          @click="color = c"
+        ></button>
+      </span>
+
+      <span v-if="mode === 'draw'" class="sub-controls">
+        <button
+          v-for="w in STROKE_WIDTHS"
+          :key="w.value"
+          :class="{ active: strokeWidth === w.value }"
+          @click="strokeWidth = w.value"
+        >
+          {{ w.label }}
+        </button>
+      </span>
+
+      <span v-if="mode === 'text'" class="sub-controls">
+        <button
+          v-for="s in FONT_SIZES"
+          :key="s.value"
+          :class="{ active: fontSize === s.value }"
+          @click="fontSize = s.value"
+        >
+          {{ s.label }}
+        </button>
+      </span>
+
+      <button @click="undo" :disabled="!canUndo">Undo</button>
       <button @click="clearPage">Clear Page</button>
       <span class="spacer"></span>
       <button @click="save" :disabled="isSaving || isLoading">{{ isSaving ? 'Saving...' : 'Save' }}</button>
@@ -35,14 +71,21 @@
           @pointerleave="onPointerUp(i, $event)"
           @click="onCanvasClick(i, $event)"
         ></canvas>
-        <textarea
+        <div
           v-for="ann in textAnnotations.filter((a) => a.pageIndex === i)"
           :key="ann.id"
-          v-model="ann.text"
-          class="text-annotation"
+          class="text-annotation-wrap"
           :style="{ left: ann.x + 'px', top: ann.y + 'px' }"
-          :ref="(el) => el && ann.id === lastAnnotationId && el.focus()"
-        ></textarea>
+        >
+          <button class="annotation-delete" title="Delete" @click="removeAnnotation(ann.id)">×</button>
+          <textarea
+            v-model="ann.text"
+            class="text-annotation"
+            :style="{ color: ann.color, fontSize: ann.fontSize + 'px' }"
+            :ref="(el) => el && ann.id === lastAnnotationId && el.focus()"
+            @blur="onAnnotationBlur(ann)"
+          ></textarea>
+        </div>
       </div>
     </div>
   </div>
@@ -58,6 +101,18 @@ import { apiFetch } from '../api'
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 const SCALE = 1.3
+const COLORS = ['#000000', '#e11d48', '#2563eb', '#16a34a']
+const STROKE_WIDTHS = [
+  { label: 'Thin', value: 1.5 },
+  { label: 'Medium', value: 3 },
+  { label: 'Thick', value: 6 },
+]
+const FONT_SIZES = [
+  { label: 'S', value: 12 },
+  { label: 'M', value: 16 },
+  { label: 'L', value: 22 },
+]
+const MAX_UNDO_PER_PAGE = 20
 
 const props = defineProps({
   file: { type: Object, required: true },
@@ -69,6 +124,9 @@ const isLoading = ref(true)
 const isSaving = ref(false)
 const message = ref('')
 const mode = ref('none')
+const color = ref(COLORS[0])
+const strokeWidth = ref(STROKE_WIDTHS[0].value)
+const fontSize = ref(FONT_SIZES[0].value)
 
 const numPages = ref(0)
 const pageIndices = computed(() => Array.from({ length: numPages.value }, (_, i) => i))
@@ -78,8 +136,16 @@ const overlayCanvases = reactive([])
 const textAnnotations = ref([])
 const lastAnnotationId = ref(null)
 
+const lastDrawnPage = ref(null)
+const undoVersion = ref(0)
+const canUndo = computed(() => {
+  undoVersion.value
+  return lastDrawnPage.value !== null && (undoStacks[lastDrawnPage.value]?.length || 0) > 0
+})
+
 let drawing = false
 let nextAnnotationId = 1
+let undoStacks = []
 
 const fetchPdfBytes = async () => {
   const res = await apiFetch(`/download/${props.file.id}`)
@@ -90,6 +156,8 @@ const loadAndRender = async () => {
   isLoading.value = true
   message.value = ''
   textAnnotations.value = []
+  undoStacks = []
+  lastDrawnPage.value = null
 
   const bytes = await fetchPdfBytes()
   const pdfDoc = await pdfjsLib.getDocument({ data: bytes }).promise
@@ -119,17 +187,39 @@ const loadAndRender = async () => {
     const overlay = overlayCanvases[i]
     overlay.width = viewport.width
     overlay.height = viewport.height
+    undoStacks[i] = []
   }
 
   isLoading.value = false
 }
 
+const pushUndoSnapshot = (i) => {
+  const overlay = overlayCanvases[i]
+  if (!overlay) return
+  if (!undoStacks[i]) undoStacks[i] = []
+  const ctx = overlay.getContext('2d')
+  undoStacks[i].push(ctx.getImageData(0, 0, overlay.width, overlay.height))
+  if (undoStacks[i].length > MAX_UNDO_PER_PAGE) undoStacks[i].shift()
+  lastDrawnPage.value = i
+  undoVersion.value++
+}
+
+const undo = () => {
+  const i = lastDrawnPage.value
+  if (i === null || !undoStacks[i] || undoStacks[i].length === 0) return
+  const snapshot = undoStacks[i].pop()
+  const overlay = overlayCanvases[i]
+  overlay.getContext('2d').putImageData(snapshot, 0, 0)
+  undoVersion.value++
+}
+
 const onPointerDown = (i, event) => {
   if (mode.value !== 'draw') return
+  pushUndoSnapshot(i)
   drawing = true
   const ctx = overlayCanvases[i].getContext('2d')
-  ctx.strokeStyle = '#000'
-  ctx.lineWidth = 2
+  ctx.strokeStyle = color.value
+  ctx.lineWidth = strokeWidth.value
   ctx.lineCap = 'round'
   ctx.beginPath()
   ctx.moveTo(event.offsetX, event.offsetY)
@@ -155,8 +245,20 @@ const onCanvasClick = (i, event) => {
     x: event.offsetX,
     y: event.offsetY,
     text: '',
+    color: color.value,
+    fontSize: fontSize.value,
   })
   lastAnnotationId.value = id
+}
+
+const removeAnnotation = (id) => {
+  textAnnotations.value = textAnnotations.value.filter((a) => a.id !== id)
+}
+
+const onAnnotationBlur = (ann) => {
+  if (!ann.text.trim()) {
+    removeAnnotation(ann.id)
+  }
 }
 
 const clearPage = () => {
@@ -164,9 +266,17 @@ const clearPage = () => {
     const overlay = overlayCanvases[i]
     if (overlay) {
       overlay.getContext('2d').clearRect(0, 0, overlay.width, overlay.height)
+      undoStacks[i] = []
     }
   })
   textAnnotations.value = []
+  lastDrawnPage.value = null
+  undoVersion.value++
+}
+
+const hexToRgb01 = (hex) => {
+  const n = parseInt(hex.slice(1), 16)
+  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255)
 }
 
 const save = async () => {
@@ -193,15 +303,14 @@ const save = async () => {
 
       const annotationsForPage = textAnnotations.value.filter((a) => a.pageIndex === i && a.text.trim())
       for (const ann of annotationsForPage) {
-        const fontSize = 14
         const pdfX = ann.x / SCALE
-        const pdfY = ph - ann.y / SCALE
+        const pdfY = ph - ann.y / SCALE - ann.fontSize * 0.8
         pdfPage.drawText(ann.text, {
           x: pdfX,
           y: pdfY,
-          size: fontSize,
+          size: ann.fontSize,
           font,
-          color: rgb(0, 0, 0),
+          color: hexToRgb01(ann.color),
         })
       }
     }
@@ -268,6 +377,37 @@ button.active {
   color: #fff;
 }
 
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.swatches,
+.sub-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 4px;
+  border-left: 1px solid #000;
+}
+
+.sub-controls button {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #000;
+}
+
+.swatch.active {
+  outline: 2px solid #000;
+  outline-offset: 2px;
+}
+
 .pages {
   display: flex;
   flex-direction: column;
@@ -298,13 +438,32 @@ button.active {
   cursor: text;
 }
 
-.text-annotation {
+.text-annotation-wrap {
   position: absolute;
+}
+
+.annotation-delete {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 1;
+  font-size: 12px;
+  border: 1px solid #000;
+  background: #fff;
+  color: #000;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.text-annotation {
+  position: relative;
   min-width: 100px;
   min-height: 20px;
   border: 1px dashed #000;
   background: rgba(255, 255, 255, 0.85);
-  font-size: 14px;
   font-family: Helvetica, Arial, sans-serif;
   padding: 2px;
   resize: both;

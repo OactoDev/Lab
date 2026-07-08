@@ -1,5 +1,5 @@
 <template>
-  <div v-if="!authReady || authCheck === 'checking'" class="status-screen">Loading...</div>
+  <div v-if="!authReady || (currentUser && authCheck === 'checking')" class="status-screen">Loading...</div>
 
   <Login v-else-if="!currentUser" />
 
